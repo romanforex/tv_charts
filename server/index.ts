@@ -6,6 +6,8 @@ import { DemoMarketData } from './brokers/demo';
 import { MetaApiBroker } from './brokers/metaapi';
 import { OandaBroker } from './brokers/oanda';
 import { PaperExecution } from './brokers/paper';
+import { HistoryStore } from './history/store';
+import { ReplaySession } from './replay/session';
 import type { Execution, MarketData } from './brokers/types';
 import { loadConfig, type Config } from './config';
 
@@ -38,7 +40,9 @@ function provider(name: 'oanda' | 'metaapi', cfg: Config) {
 const data: MarketData = config.MARKET_DATA === 'demo' ? new DemoMarketData() : provider(config.MARKET_DATA, config);
 const execution: Execution = config.EXECUTION === 'paper' ? new PaperExecution(data) : provider(config.EXECUTION, config);
 
-const app = buildApp(data, execution, { logger: true });
+const replay = new ReplaySession(new HistoryStore(config.HISTORY_DIR));
+
+const app = buildApp({ data, execution, replay, logger: true });
 
 // In production the server also serves the built client, so it's one process on one port.
 const clientDir = fileURLToPath(new URL('../dist/client', import.meta.url));

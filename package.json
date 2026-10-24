@@ -10,6 +10,7 @@
     "dev:client": "vite",
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx --env-file-if-exists=.env server/index.ts",
+    "download": "tsx --env-file-if-exists=.env scripts/download.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

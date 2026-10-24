@@ -1,5 +1,5 @@
 import { LineStyle, type IPriceLine } from 'lightweight-charts';
-import { planOrder, roundToDigits, sideFromTakeProfit, stopLossError } from '../shared/orderPlan';
+import { pipSize, planOrder, roundToDigits, sideFromTakeProfit, stopLossError } from '../shared/orderPlan';
 import type { PendingOrderRequest, Quote, Side } from '../shared/types';
 import { COLORS, type PriceChart } from './chart';
 
@@ -147,8 +147,7 @@ export class OrderTool {
   private label(name: string, price: number) {
     if (this.entry === undefined) return name;
     const { digits } = this.deps.context();
-    const pip = 10 ** -(digits === 3 || digits === 5 ? digits - 1 : digits);
-    const pips = (price - this.entry) / pip;
+    const pips = (price - this.entry) / pipSize(digits);
     return `${name} ${pips >= 0 ? '+' : ''}${pips.toFixed(1)}p`;
   }
 

@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "include": ["client", "server", "shared", "vite.config.ts", "vitest.config.ts"]
+  "include": ["client", "server", "shared", "scripts", "vite.config.ts", "vitest.config.ts"]
 }

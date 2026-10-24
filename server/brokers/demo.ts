@@ -1,4 +1,4 @@
-import { TIMEFRAME_SECONDS, type Candle, type Quote, type SymbolInfo, type Timeframe } from '../../shared/types';
+import { TIMEFRAME_SECONDS, type BidAskBar, type Candle, type Quote, type SymbolInfo, type Timeframe } from '../../shared/types';
 import type { MarketData } from './types';
 
 /**
@@ -48,6 +48,37 @@ export class DemoMarketData implements MarketData {
   async getSymbolInfo(symbol: string): Promise<SymbolInfo> {
     return { symbol, digits: digitsFor(symbol) };
   }
+}
+
+/**
+ * Synthetic one-minute bid/ask bars for `from <= time < to`, skipping the FX weekend
+ * (Friday 22:00 to Sunday 22:00 UTC). Lets replay mode run without a broker account.
+ */
+export function demoMinuteBars(symbol: string, from: number, to: number): BidAskBar[] {
+  const half = (pipSize(symbol) * 0.8) / 2;
+  const digits = digitsFor(symbol);
+  const round = (p: number) => Number(p.toFixed(digits));
+  const bars: BidAskBar[] = [];
+  for (let t = Math.ceil(from / 60) * 60; t < to; t += 60) {
+    if (isWeekend(t)) continue;
+    const points = [0, 15, 30, 45, 60].map((s) => demoPrice(symbol, t + s));
+    const mid = { o: points[0], h: Math.max(...points), l: Math.min(...points), c: points[4] };
+    const side = (shift: number) => ({
+      o: round(mid.o + shift),
+      h: round(mid.h + shift),
+      l: round(mid.l + shift),
+      c: round(mid.c + shift),
+    });
+    bars.push({ time: t, bid: side(-half), ask: side(half), volume: 1 + Math.round(Math.abs(noise(hash(symbol), t / 60)) * 50) });
+  }
+  return bars;
+}
+
+function isWeekend(t: number) {
+  const d = new Date(t * 1000);
+  const day = d.getUTCDay();
+  const hour = d.getUTCHours();
+  return day === 6 || (day === 5 && hour >= 22) || (day === 0 && hour < 22);
 }
 
 export function digitsFor(symbol: string) {

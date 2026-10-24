@@ -1,4 +1,5 @@
 import type {
+  BidAskBar,
   Candle,
   OrderResult,
   PendingOrder,
@@ -33,6 +34,13 @@ interface OandaCandle {
   time: string;
   volume: number;
   mid: { o: string; h: string; l: string; c: string };
+}
+interface OandaBidAskCandle {
+  time: string;
+  volume: number;
+  complete: boolean;
+  bid: { o: string; h: string; l: string; c: string };
+  ask: { o: string; h: string; l: string; c: string };
 }
 interface OandaOrder {
   id: string;
@@ -79,6 +87,24 @@ export class OandaBroker implements MarketData, Execution {
       close: Number(c.mid.c),
       volume: c.volume,
     }));
+  }
+
+  /** Completed one-minute bid/ask bars starting at `from` (UNIX seconds); OANDA allows up to 5000 per call. */
+  async getMinuteBars(symbol: string, from: number, count = 5000): Promise<BidAskBar[]> {
+    const params = new URLSearchParams({
+      granularity: 'M1',
+      price: 'BA',
+      from: new Date(from * 1000).toISOString(),
+      count: String(count),
+    });
+    const data = await this.request<{ candles: OandaBidAskCandle[] }>(
+      'GET',
+      `/instruments/${toOandaInstrument(symbol)}/candles?${params}`,
+    );
+    const ohlc = (p: OandaBidAskCandle['bid']) => ({ o: Number(p.o), h: Number(p.h), l: Number(p.l), c: Number(p.c) });
+    return data.candles
+      .filter((c) => c.complete)
+      .map((c) => ({ time: Math.floor(Date.parse(c.time) / 1000), bid: ohlc(c.bid), ask: ohlc(c.ask), volume: c.volume }));
   }
 
   async getQuote(symbol: string): Promise<Quote> {

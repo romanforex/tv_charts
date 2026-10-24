@@ -87,3 +87,56 @@ export interface ServerInfo {
 export interface ApiError {
   error: string;
 }
+
+/** One minute of bid and ask prices. `time` is the bar's open, UNIX seconds (UTC). */
+export interface BidAskBar {
+  time: number;
+  bid: Ohlc;
+  ask: Ohlc;
+  volume: number;
+}
+
+export interface Ohlc {
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+}
+
+export type ExitReason = 'takeProfit' | 'stopLoss' | 'manual';
+
+export interface ClosedTrade {
+  id: string;
+  symbol: string;
+  side: Side;
+  lots: number;
+  openPrice: number;
+  closePrice: number;
+  /** UNIX seconds. */
+  openedAt: number;
+  closedAt: number;
+  reason: ExitReason;
+  /** In the symbol's quote currency (USD for EURUSD, JPY for USDJPY). */
+  profit: number;
+  pips: number;
+  /** Result as a multiple of the initial risk (entry to stop loss). */
+  r: number;
+}
+
+export interface ReplayStats {
+  trades: number;
+  wins: number;
+  totalR: number;
+  totalPips: number;
+}
+
+export interface ReplayState {
+  /** Simulated clock, UNIX seconds. */
+  time: number;
+  /** Simulated seconds per real second. */
+  speed: number;
+  playing: boolean;
+  /** Downloaded symbols and the time span each covers (UNIX seconds). */
+  symbols: { symbol: string; from: number; to: number }[];
+  stats: ReplayStats;
+}

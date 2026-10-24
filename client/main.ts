@@ -1,11 +1,12 @@
 import './styles.css';
-import { TIMEFRAMES, type Quote, type Timeframe } from '../shared/types';
-import { api } from './api';
+import { TIMEFRAMES, TIMEFRAME_SECONDS, type Quote, type ReplayState, type Timeframe } from '../shared/types';
+import { createApi, info, replayApi, type ReplayCommand } from './api';
 import { PriceChart } from './chart';
 import { OrderTool } from './orderTool';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const els = {
+  mode: $<HTMLSelectElement>('mode'),
   symbolForm: $<HTMLFormElement>('symbol-form'),
   symbol: $<HTMLInputElement>('symbol'),
   timeframe: $<HTMLSelectElement>('timeframe'),
@@ -21,10 +22,20 @@ const els = {
   confirmActions: $('confirm-actions'),
   send: $<HTMLButtonElement>('send'),
   discard: $<HTMLButtonElement>('discard'),
+  replayBar: $('replay-bar'),
+  replayPlay: $<HTMLButtonElement>('replay-play'),
+  replayStep: $<HTMLButtonElement>('replay-step'),
+  replaySpeed: $<HTMLSelectElement>('replay-speed'),
+  replayClock: $('replay-clock'),
+  replaySeek: $<HTMLFormElement>('replay-seek'),
+  replayDate: $<HTMLInputElement>('replay-date'),
+  replayStats: $('replay-stats'),
 };
 
-const CANDLE_POLL_MS = 1000;
+const LIVE_POLL_MS = 1000;
+const REPLAY_POLL_MS = 250;
 const ACCOUNT_POLL_MS = 3000;
+const REPLAY_ACCOUNT_POLL_MS = 1000;
 
 // Remembered per browser; storage can be unavailable (private mode), so failures are ignored.
 const prefs = {
@@ -45,6 +56,8 @@ const prefs = {
 };
 
 const state = {
+  mode: (prefs.get('mode') === 'replay' ? 'replay' : 'live') as 'live' | 'replay',
+  replay: undefined as ReplayState | undefined,
   symbol: prefs.get('symbol') ?? 'EURUSD',
   timeframe: (prefs.get('timeframe') as Timeframe | null) ?? 'M5',
   digits: 5,
@@ -54,12 +67,16 @@ const state = {
   ready: false,
 };
 if (!TIMEFRAMES.includes(state.timeframe)) state.timeframe = 'M5';
+let api = createApi(state.mode === 'replay' ? '/api/replay' : '/api');
+const replaying = () => state.mode === 'replay' && !!state.replay?.playing;
 
 for (const tf of TIMEFRAMES) els.timeframe.add(new Option(tf, tf));
 els.symbol.value = state.symbol;
 els.timeframe.value = state.timeframe;
 els.lots.value = prefs.get('lots') ?? els.lots.value;
 els.confirm.checked = prefs.get('confirm') !== 'false';
+els.mode.value = state.mode;
+els.replayBar.hidden = state.mode !== 'replay';
 
 function setStatus(message: string, isError = false) {
   els.status.textContent = message;
@@ -67,6 +84,9 @@ function setStatus(message: string, isError = false) {
 }
 
 const chart = new PriceChart($('chart'));
+// Clicking the chart takes focus off toolbar buttons, so Enter confirms the order instead of
+// pressing whichever button was clicked last.
+$('chart').addEventListener('pointerdown', () => (document.activeElement as HTMLElement | null)?.blur?.());
 const tool = new OrderTool({
   chart,
   context: () => ({ symbol: state.symbol, digits: state.digits, lots: Number(els.lots.value) }),
@@ -90,7 +110,7 @@ async function loadChart() {
   state.ready = false;
   state.quote = undefined;
   tool.cancel('Order cancelled: chart changed');
-  document.title = `${symbol} ${timeframe}`;
+  document.title = `${symbol} ${timeframe}${state.mode === 'replay' ? ' (replay)' : ''}`;
   try {
     const [info, candles] = await Promise.all([api.symbol(symbol), api.candles(symbol, timeframe, 500)]);
     if (generation !== state.generation) return;
@@ -109,8 +129,9 @@ async function pollCandles() {
   const generation = state.generation;
   if (state.ready) {
     try {
+      // In replay several bars can pass between polls; the chart skips the ones it already has.
       const [candles, quote] = await Promise.all([
-        api.candles(state.symbol, state.timeframe, 2),
+        api.candles(state.symbol, state.timeframe, state.mode === 'replay' ? 50 : 2),
         api.quote(state.symbol),
       ]);
       if (generation === state.generation && state.ready) {
@@ -123,7 +144,7 @@ async function pollCandles() {
       if (!tool.active) setStatus(`Price update failed: ${(err as Error).message}`, true);
     }
   }
-  setTimeout(pollCandles, CANDLE_POLL_MS);
+  setTimeout(pollCandles, replaying() ? REPLAY_POLL_MS : LIVE_POLL_MS);
 }
 
 async function refreshAccount() {
@@ -138,7 +159,70 @@ async function refreshAccount() {
 
 async function pollAccount() {
   if (state.ready) await refreshAccount();
-  setTimeout(pollAccount, ACCOUNT_POLL_MS);
+  setTimeout(pollAccount, replaying() ? REPLAY_ACCOUNT_POLL_MS : ACCOUNT_POLL_MS);
+}
+
+// --- Replay mode ---
+
+function renderReplay(replay: ReplayState) {
+  const previous = state.replay;
+  state.replay = replay;
+  els.replayPlay.textContent = replay.playing ? 'Pause' : 'Play';
+  els.replaySpeed.value = String(replay.speed);
+  els.replayClock.textContent = replay.time ? formatLocal(replay.time).replace('T', ' ') : 'No data';
+  const { trades, wins, totalR, totalPips } = replay.stats;
+  els.replayStats.textContent = trades
+    ? `${trades} trades · ${Math.round((wins / trades) * 100)}% wins · ${signed(totalR)}R · ${signed(totalPips)} pips`
+    : 'No closed trades yet';
+  if (!replay.symbols.length) {
+    setStatus('No replay data yet. Run: npm run download -- EURUSD --from 2025-01-01 (add --demo for synthetic data)', true);
+  }
+  // The clock went backwards (a jump): redraw the chart from scratch.
+  if (previous && replay.time < previous.time) void loadChart();
+}
+
+async function replayCommand(cmd: ReplayCommand) {
+  try {
+    renderReplay(await replayApi.control(cmd));
+  } catch (err) {
+    setStatus((err as Error).message, true);
+  }
+}
+
+async function pollReplay() {
+  if (state.mode === 'replay') {
+    try {
+      renderReplay(await replayApi.state());
+    } catch (err) {
+      console.warn('replay state failed', err);
+    }
+  }
+  setTimeout(pollReplay, 500);
+}
+
+async function setMode(mode: 'live' | 'replay') {
+  if (mode === 'live' && state.replay?.playing) await replayCommand({ action: 'pause' });
+  state.mode = mode;
+  prefs.set('mode', mode);
+  api = createApi(mode === 'replay' ? '/api/replay' : '/api');
+  els.replayBar.hidden = mode !== 'replay';
+  els.bid.textContent = els.ask.textContent = '-';
+  if (mode === 'replay') {
+    renderReplay(await replayApi.state());
+    if (state.replay?.time) els.replayDate.value = formatLocal(state.replay.time);
+  }
+  void loadChart();
+}
+
+/** UNIX seconds to the `YYYY-MM-DDTHH:mm` local format used by datetime-local inputs. */
+function formatLocal(time: number) {
+  const d = new Date(time * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function signed(n: number) {
+  return `${n >= 0 ? '+' : ''}${n.toFixed(1)}`;
 }
 
 function changeChart() {
@@ -164,6 +248,23 @@ async function accountAction(button: HTMLButtonElement, question: string, action
     button.disabled = false;
   }
 }
+
+els.mode.addEventListener('change', () => void setMode(els.mode.value as 'live' | 'replay'));
+els.replayPlay.addEventListener('click', () => replayCommand({ action: state.replay?.playing ? 'pause' : 'play' }));
+els.replayStep.addEventListener('click', () =>
+  replayCommand({ action: 'step', seconds: TIMEFRAME_SECONDS[state.timeframe] }),
+);
+els.replaySpeed.addEventListener('change', () => replayCommand({ action: 'speed', speed: Number(els.replaySpeed.value) }));
+els.replaySeek.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const time = Math.floor(new Date(els.replayDate.value).getTime() / 1000);
+  if (!time) return setStatus('Pick a date and time to jump to', true);
+  const { stats } = state.replay ?? { stats: { trades: 0 } };
+  if (stats.trades && !confirm('Jumping starts a fresh replay account. Continue?')) return;
+  await replayCommand({ action: 'seek', time });
+  setStatus(`Jumped to ${els.replayDate.value.replace('T', ' ')}; replay account reset`);
+  void loadChart();
+});
 
 els.symbolForm.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -196,16 +297,21 @@ els.closePositions.addEventListener('click', () =>
 );
 
 document.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-  if (e.key === 'Escape') tool.cancel();
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement) return;
+  // Space and Enter on a focused button press that button.
+  if (t instanceof HTMLButtonElement && (e.key === ' ' || e.key === 'Enter')) return;
+  if (e.key === ' ' && state.mode === 'replay') {
+    e.preventDefault();
+    els.replayPlay.click();
+  } else if (e.key === 'Escape') tool.cancel();
   else if (e.key === 'Enter') void tool.confirm();
   else if (e.key.toLowerCase() === 'n' && !tool.active) els.newOrder.click();
 });
 
-api
-  .info()
+info()
   .then((info) => {
-    els.venue.textContent = `data: ${info.marketData} · orders: ${info.execution}`;
+    els.venue.textContent = `live data: ${info.marketData} · live orders: ${info.execution}`;
     if (info.live) {
       const badge = document.createElement('span');
       badge.className = 'live';
@@ -215,6 +321,7 @@ api
   })
   .catch(() => setStatus('Cannot reach the server. Is `npm run dev` running?', true));
 
-void loadChart();
+void setMode(state.mode);
 void pollCandles();
 void pollAccount();
+void pollReplay();

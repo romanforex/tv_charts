@@ -5,6 +5,9 @@ const schema = z
     HOST: z.string().default('127.0.0.1'),
     PORT: z.coerce.number().int().default(3001),
 
+    /** Where `npm run download` stores one-minute history for replay mode and training. */
+    HISTORY_DIR: z.string().default('data/history'),
+
     /** Where chart candles and quotes come from. */
     MARKET_DATA: z.enum(['demo', 'oanda', 'metaapi']).default('demo'),
     /** Where orders go. `paper` keeps them in memory and never touches a broker. */

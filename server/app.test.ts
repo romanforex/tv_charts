@@ -6,7 +6,7 @@ import type { PendingOrder, Quote } from '../shared/types';
 
 function setup() {
   const data = new DemoMarketData();
-  const app = buildApp(data, new PaperExecution(data));
+  const app = buildApp({ data, execution: new PaperExecution(data) });
   const quote = async (): Promise<Quote> => (await app.inject({ url: '/api/quote?symbol=EURUSD' })).json();
   return { app, quote };
 }

@@ -144,3 +144,17 @@ button.active {
 #confirm-actions[hidden] {
   display: none;
 }
+
+#replay-bar[hidden] {
+  display: none;
+}
+
+.clock {
+  font-variant-numeric: tabular-nums;
+  min-width: 140px;
+}
+
+#replay-stats {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

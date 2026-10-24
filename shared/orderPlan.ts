@@ -51,3 +51,8 @@ export function roundToDigits(price: number, digits: number): number {
   const factor = 10 ** digits;
   return Math.round(price * factor) / factor;
 }
+
+/** Size of one pip: 0.0001 for 5-digit quotes, 0.01 for 3-digit (JPY) quotes. */
+export function pipSize(digits: number): number {
+  return 10 ** -(digits === 3 || digits === 5 ? digits - 1 : digits);
+}

@@ -36,6 +36,27 @@ The server re-checks the order against a fresh quote. If price has crossed your 
 Working orders and open positions for the charted symbol are drawn on the chart. **Cancel pending** and
 **Close positions** act on the charted symbol only.
 
+## Replay: paper trading on past data
+
+Switch the **Live / Replay** selector to *Replay* to trade on downloaded history as if it were live.
+The chart only ever shows data up to the replay clock.
+
+1. Download one-minute history (needs the OANDA settings below; resumes where it left off):
+
+   ```sh
+   npm run download -- EURUSD,GBPUSD --from 2025-01-01
+   npm run download -- EURUSD --from 2025-01-01 --demo   # synthetic data, no account needed
+   ```
+
+2. Pick a date and **Jump**, then **Play** (Space), **Step** one candle at a time, or change the
+   speed (1x to 1800x). Market-closed gaps such as weekends are skipped.
+3. Place orders with the same three clicks. A simulated account fills them bar by bar using bid/ask
+   prices, and the bar above the chart shows trades, win rate, total R and pips.
+
+Jumping to a new date starts a fresh replay account. The exact fill rules (spread, gaps, and what
+happens when a bar touches both TP and SL) are in [docs/simulation.md](docs/simulation.md). They are
+also the spec for a training environment.
+
 ## Connecting a broker
 
 Copy `.env.example` to `.env`. Chart data and order execution are set separately:
@@ -74,14 +95,20 @@ Lot sizes are MetaTrader lots. For OANDA they are converted to units with `OANDA
 | `npm run build`     | Typecheck and build the client to `dist/client`                  |
 | `npm start`         | Production: one process serving the API and the built client     |
 | `npm test`          | Unit and API tests                                                |
+| `npm run download`  | Download one-minute bid/ask history for replay and training       |
 | `npm run typecheck` | TypeScript only                                                   |
 
 ## Layout
 
 ```
-client/   browser: chart, three-click order tool, toolbar
+client/   browser: chart, three-click order tool, toolbar, replay controls
 server/   Fastify API; brokers/ has one adapter per provider (oanda, metaapi, demo, paper)
+  history/  on-disk one-minute bid/ask store
+  replay/   replay clock and data (served under /api/replay)
+  sim/      bar-by-bar simulated account used by replay
+scripts/  download.ts
 shared/   types and order rules used by both sides
+docs/     simulation.md: data format and fill rules
 ```
 
 ## Safety

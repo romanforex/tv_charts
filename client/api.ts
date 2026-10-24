@@ -1,10 +1,12 @@
 import type {
   Candle,
+  ClosedTrade,
   OrderResult,
   PendingOrder,
   PendingOrderRequest,
   Position,
   Quote,
+  ReplayState,
   ServerInfo,
   SymbolInfo,
   Timeframe,
@@ -24,15 +26,34 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 const q = (params: Record<string, string | number>) =>
   new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
 
-export const api = {
-  info: () => request<ServerInfo>('/api/info'),
-  candles: (symbol: string, timeframe: Timeframe, count: number) =>
-    request<Candle[]>(`/api/candles?${q({ symbol, timeframe, count })}`),
-  quote: (symbol: string) => request<Quote>(`/api/quote?${q({ symbol })}`),
-  symbol: (symbol: string) => request<SymbolInfo>(`/api/symbol?${q({ symbol })}`),
-  orders: (symbol: string) => request<PendingOrder[]>(`/api/orders?${q({ symbol })}`),
-  positions: (symbol: string) => request<Position[]>(`/api/positions?${q({ symbol })}`),
-  placeOrder: (order: PendingOrderRequest) => request<OrderResult>('/api/orders', order),
-  cancelOrders: (symbol: string) => request<{ cancelled: number }>('/api/orders/cancel', { symbol }),
-  closePositions: (symbol: string) => request<{ closed: number }>('/api/positions/close', { symbol }),
+/** Chart and order calls. `base` is `/api` for live trading or `/api/replay` for replay mode. */
+export function createApi(base: string) {
+  return {
+    candles: (symbol: string, timeframe: Timeframe, count: number) =>
+      request<Candle[]>(`${base}/candles?${q({ symbol, timeframe, count })}`),
+    quote: (symbol: string) => request<Quote>(`${base}/quote?${q({ symbol })}`),
+    symbol: (symbol: string) => request<SymbolInfo>(`${base}/symbol?${q({ symbol })}`),
+    orders: (symbol: string) => request<PendingOrder[]>(`${base}/orders?${q({ symbol })}`),
+    positions: (symbol: string) => request<Position[]>(`${base}/positions?${q({ symbol })}`),
+    placeOrder: (order: PendingOrderRequest) => request<OrderResult>(`${base}/orders`, order),
+    cancelOrders: (symbol: string) => request<{ cancelled: number }>(`${base}/orders/cancel`, { symbol }),
+    closePositions: (symbol: string) => request<{ closed: number }>(`${base}/positions/close`, { symbol }),
+  };
+}
+
+export type Api = ReturnType<typeof createApi>;
+
+export const info = () => request<ServerInfo>('/api/info');
+
+export type ReplayCommand =
+  | { action: 'play' }
+  | { action: 'pause' }
+  | { action: 'speed'; speed: number }
+  | { action: 'step'; seconds: number }
+  | { action: 'seek'; time: number };
+
+export const replayApi = {
+  state: () => request<ReplayState>('/api/replay/state'),
+  control: (cmd: ReplayCommand) => request<ReplayState>('/api/replay/control', cmd),
+  trades: () => request<ClosedTrade[]>('/api/replay/trades'),
 };

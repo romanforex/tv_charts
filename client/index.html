@@ -7,6 +7,13 @@
   </head>
   <body>
     <header class="toolbar">
+      <div class="group">
+        <select id="mode" aria-label="Mode">
+          <option value="live">Live</option>
+          <option value="replay">Replay</option>
+        </select>
+      </div>
+
       <form id="symbol-form" class="group">
         <input id="symbol" list="symbols" value="EURUSD" spellcheck="false" autocomplete="off" aria-label="Symbol" />
         <datalist id="symbols">
@@ -39,6 +46,26 @@
       <div class="group quote"><span id="bid">-</span> / <span id="ask">-</span></div>
       <div class="group right"><span id="venue"></span></div>
     </header>
+
+    <div id="replay-bar" class="toolbar" hidden>
+      <div class="group">
+        <button id="replay-play" class="primary" title="Shortcut: Space">Play</button>
+        <button id="replay-step" title="Advance one candle">Step</button>
+        <select id="replay-speed" aria-label="Replay speed">
+          <option value="1">1x</option>
+          <option value="10">10x</option>
+          <option value="60" selected>60x</option>
+          <option value="300">300x</option>
+          <option value="1800">1800x</option>
+        </select>
+        <span id="replay-clock" class="clock"></span>
+      </div>
+      <form id="replay-seek" class="group">
+        <input id="replay-date" type="datetime-local" aria-label="Replay date" />
+        <button>Jump</button>
+      </form>
+      <div class="group right"><span id="replay-stats"></span></div>
+    </div>
 
     <div id="chart"></div>
 

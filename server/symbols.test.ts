@@ -11,6 +11,8 @@ describe('symbols', () => {
   it('maps to and from OANDA instruments', () => {
     expect(toOandaInstrument('EURUSD')).toBe('EUR_USD');
     expect(toOandaInstrument('XAU_USD')).toBe('XAU_USD');
+    expect(toOandaInstrument('BCOUSD')).toBe('BCO_USD');
+    expect(toOandaInstrument('SPX500USD')).toBe('SPX500_USD');
     expect(fromOandaInstrument('USD_JPY')).toBe('USDJPY');
   });
 });
