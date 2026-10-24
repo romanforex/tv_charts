@@ -14,6 +14,14 @@ npm run dev          # http://localhost:5173
 With no `.env` it runs on **demo** prices and a **paper** (simulated) account, so you can try the whole flow
 without any broker credentials.
 
+## How prices reach the chart
+
+The server keeps one price feed per symbol and pushes every change to the browser (server-sent
+events at `/api/stream`). With OANDA it uses OANDA's streaming prices, so the bid/ask and the newest
+candle move as soon as the price changes. Other sources are polled once a second on the server,
+shared by every open tab. Full candles are re-fetched every 5 seconds to pick up exact OHLC and
+volume.
+
 ## Placing an order
 
 1. Press **N** (or click **New order**).

@@ -9,15 +9,24 @@ import type {
   Timeframe,
 } from '../../shared/types';
 
+/** Called with each new price; `symbol` is the plain form. */
+export type QuoteCallback = (symbol: string, quote: Quote) => void;
+
+/** Optional push feed of prices, for brokers that offer one. Polling `getQuote` is the fallback. */
+export interface QuoteStreaming {
+  /** Streams prices for `symbols` until `signal` aborts. Rejects (or resolves) when the stream ends. */
+  streamQuotes?(symbols: string[], onQuote: QuoteCallback, signal: AbortSignal): Promise<void>;
+}
+
 /** Symbols are always the plain form (EURUSD); each adapter maps them to its broker's naming. */
-export interface MarketData {
+export interface MarketData extends QuoteStreaming {
   readonly name: string;
   getCandles(symbol: string, timeframe: Timeframe, count: number): Promise<Candle[]>;
   getQuote(symbol: string): Promise<Quote>;
   getSymbolInfo(symbol: string): Promise<SymbolInfo>;
 }
 
-export interface Execution {
+export interface Execution extends QuoteStreaming {
   readonly name: string;
   readonly live: boolean;
   /** Quote the order is validated against: the execution venue's own price. */

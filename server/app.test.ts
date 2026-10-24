@@ -55,6 +55,22 @@ describe('API', () => {
     expect(res.json().error).toMatch(/below entry/);
   });
 
+  it('streams quotes as server-sent events', async () => {
+    const { app } = setup();
+    const address = await app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const res = await fetch(`${address}/api/stream?symbol=EURUSD`);
+      expect(res.headers.get('content-type')).toBe('text/event-stream');
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      const event = new TextDecoder().decode(value);
+      expect(event).toMatch(/^data: \{"quote":\{"bid":[\d.]+,"ask":[\d.]+,"time":\d+\}\}\n\n/);
+      await reader.cancel();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('validates input', async () => {
     const { app } = setup();
     const res = await app.inject({ url: '/api/candles?symbol=EURUSD&timeframe=M7' });

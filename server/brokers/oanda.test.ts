@@ -44,3 +44,41 @@ describe('OandaBroker.getMinuteBars', () => {
     ]);
   });
 });
+
+describe('OandaBroker.streamQuotes', () => {
+  it('parses the price stream across chunk boundaries and ignores heartbeats', async () => {
+    const lines = [
+      '{"type":"HEARTBEAT","time":"2025-03-03T00:00:00.000Z"}\n{"type":"PRICE","instrument":"EUR_USD","time":"2025-03-03T00:00:01.000Z",',
+      '"bids":[{"price":"1.04000"}],"asks":[{"price":"1.04012"}]}\n',
+      '{"type":"PRICE","instrument":"USD_JPY","time":"2025-03-03T00:00:02.000Z","bids":[{"price":"150.100"}],"asks":[{"price":"150.112"}]}\n',
+    ];
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => {
+      const body = new ReadableStream({
+        start(c) {
+          for (const l of lines) c.enqueue(new TextEncoder().encode(l));
+          // Stays open like the real stream until the caller aborts.
+          controller.signal.addEventListener('abort', () => c.error(new Error('aborted')));
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const oanda = new OandaBroker({ token: 't', accountId: 'acc', env: 'practice', unitsPerLot: 100_000 });
+
+    const quotes: [string, number, number][] = [];
+    const done = oanda.streamQuotes(['EURUSD', 'USDJPY'], (s, quote) => {
+      quotes.push([s, quote.bid, quote.ask]);
+      if (quotes.length === 2) controller.abort();
+    }, controller.signal);
+    await expect(done).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://stream-fxpractice.oanda.com/v3/accounts/acc/pricing/stream?instruments=EUR_USD,USD_JPY',
+    );
+    expect(quotes).toEqual([
+      ['EURUSD', 1.04, 1.04012],
+      ['USDJPY', 150.1, 150.112],
+    ]);
+  });
+});

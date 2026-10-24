@@ -10,7 +10,11 @@ import type {
   Timeframe,
 } from '../../shared/types';
 import { fromOandaInstrument, toOandaInstrument } from '../symbols';
-import { BrokerError, type Execution, type MarketData } from './types';
+import { BrokerError, type Execution, type MarketData, type QuoteCallback } from './types';
+
+const REQUEST_TIMEOUT_MS = 10_000;
+/** OANDA sends a heartbeat every 5 seconds; this long with no data means the stream is dead. */
+const STREAM_IDLE_MS = 20_000;
 
 const GRANULARITY: Record<Timeframe, string> = {
   M1: 'M1',
@@ -42,6 +46,13 @@ interface OandaBidAskCandle {
   bid: { o: string; h: string; l: string; c: string };
   ask: { o: string; h: string; l: string; c: string };
 }
+interface OandaStreamMessage {
+  type: 'PRICE' | 'HEARTBEAT';
+  instrument: string;
+  time: string;
+  bids?: { price: string }[];
+  asks?: { price: string }[];
+}
 interface OandaOrder {
   id: string;
   type: string;
@@ -66,11 +77,72 @@ export class OandaBroker implements MarketData, Execution {
   readonly name = 'oanda';
   readonly live: boolean;
   private readonly baseUrl: string;
+  private readonly streamUrl: string;
   private readonly digitsCache = new Map<string, number>();
 
   constructor(private readonly opts: OandaOptions) {
     this.live = opts.env === 'live';
     this.baseUrl = this.live ? 'https://api-fxtrade.oanda.com/v3' : 'https://api-fxpractice.oanda.com/v3';
+    this.streamUrl = this.live ? 'https://stream-fxtrade.oanda.com/v3' : 'https://stream-fxpractice.oanda.com/v3';
+  }
+
+  /** Pushes every price change for `symbols` from OANDA's pricing stream until `signal` aborts. */
+  async streamQuotes(symbols: string[], onQuote: QuoteCallback, signal: AbortSignal): Promise<void> {
+    // Aborts if nothing arrives (connecting included) for STREAM_IDLE_MS; reset on every chunk.
+    const idle = new AbortController();
+    let timer = setTimeout(() => idle.abort(), STREAM_IDLE_MS);
+    const instruments = symbols.map(toOandaInstrument).join(',');
+    let res: Response;
+    try {
+      res = await fetch(`${this.streamUrl}${this.account}/pricing/stream?instruments=${instruments}`, {
+        headers: { Authorization: `Bearer ${this.opts.token}`, 'Accept-Datetime-Format': 'RFC3339' },
+        signal: AbortSignal.any([signal, idle.signal]),
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      if (signal.aborted) return;
+      throw new BrokerError(`Could not reach the OANDA price stream: ${(err as Error).message}`);
+    }
+    if (!res.ok || !res.body) {
+      clearTimeout(timer);
+      const data = (await res.json().catch(() => ({}))) as { errorMessage?: string };
+      throw new BrokerError(`OANDA price stream: ${data.errorMessage ?? res.statusText}`, res.status >= 500 ? 502 : 400);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        clearTimeout(timer);
+        timer = setTimeout(() => idle.abort(), STREAM_IDLE_MS);
+        buffer += decoder.decode(value, { stream: true });
+        let newline: number;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (!line) continue;
+          const msg = JSON.parse(line) as OandaStreamMessage;
+          if (msg.type === 'PRICE' && msg.bids?.length && msg.asks?.length) {
+            onQuote(fromOandaInstrument(msg.instrument), {
+              bid: Number(msg.bids[0].price),
+              ask: Number(msg.asks[0].price),
+              time: Date.parse(msg.time),
+            });
+          }
+        }
+      }
+    } catch (err) {
+      if (signal.aborted) return;
+      if (idle.signal.aborted) throw new BrokerError('OANDA price stream went quiet');
+      throw new BrokerError(`OANDA price stream failed: ${(err as Error).message}`);
+    } finally {
+      clearTimeout(timer);
+      reader.cancel().catch(() => {});
+    }
+    if (!signal.aborted) throw new BrokerError('OANDA price stream closed');
   }
 
   async getCandles(symbol: string, timeframe: Timeframe, count: number): Promise<Candle[]> {
@@ -215,6 +287,7 @@ export class OandaBroker implements MarketData, Execution {
           'Accept-Datetime-Format': 'RFC3339',
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       throw new BrokerError(`Could not reach OANDA: ${(err as Error).message}`);

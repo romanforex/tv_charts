@@ -12,11 +12,17 @@ import type {
   Timeframe,
 } from '../shared/types';
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    // A hung request would otherwise stall the polling loop that awaits it.
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  }).catch((err: Error) => {
+    throw new Error(err.name === 'TimeoutError' ? 'Server did not respond in time' : err.message);
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status} ${res.statusText}`);
@@ -29,6 +35,8 @@ const q = (params: Record<string, string | number>) =>
 /** Chart and order calls. `base` is `/api` for live trading or `/api/replay` for replay mode. */
 export function createApi(base: string) {
   return {
+    /** Server-sent price events for `symbol`; see `/stream` in server/app.ts. */
+    streamUrl: (symbol: string) => `${base}/stream?${q({ symbol })}`,
     candles: (symbol: string, timeframe: Timeframe, count: number) =>
       request<Candle[]>(`${base}/candles?${q({ symbol, timeframe, count })}`),
     quote: (symbol: string) => request<Quote>(`${base}/quote?${q({ symbol })}`),

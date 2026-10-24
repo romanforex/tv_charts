@@ -21,7 +21,11 @@ export class PaperExecution implements Execution {
   private orders: PendingOrder[] = [];
   private positions: Position[] = [];
 
-  constructor(private readonly data: MarketData) {}
+  readonly streamQuotes: Execution['streamQuotes'];
+
+  constructor(private readonly data: MarketData) {
+    this.streamQuotes = data.streamQuotes?.bind(data);
+  }
 
   getQuote(symbol: string): Promise<Quote> {
     return this.data.getQuote(symbol);

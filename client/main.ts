@@ -32,8 +32,11 @@ const els = {
   replayStats: $('replay-stats'),
 };
 
-const LIVE_POLL_MS = 1000;
-const REPLAY_POLL_MS = 250;
+// Prices arrive on the stream and move the newest candle; these refreshes pick up exact OHLC and
+// volume from the source, and in replay the many bars that pass between ticks at high speed.
+const LIVE_CANDLE_REFRESH_MS = 5000;
+const REPLAY_CANDLE_REFRESH_MS = 250;
+const PAUSED_REPLAY_CANDLE_REFRESH_MS = 2000;
 const ACCOUNT_POLL_MS = 3000;
 const REPLAY_ACCOUNT_POLL_MS = 1000;
 
@@ -66,6 +69,7 @@ const state = {
   generation: 0,
   ready: false,
 };
+let stream: EventSource | undefined;
 if (!TIMEFRAMES.includes(state.timeframe)) state.timeframe = 'M5';
 let api = createApi(state.mode === 'replay' ? '/api/replay' : '/api');
 const replaying = () => state.mode === 'replay' && !!state.replay?.playing;
@@ -109,6 +113,8 @@ async function loadChart() {
   const { symbol, timeframe } = state;
   state.ready = false;
   state.quote = undefined;
+  stream?.close();
+  stream = undefined;
   tool.cancel('Order cancelled: chart changed');
   document.title = `${symbol} ${timeframe}${state.mode === 'replay' ? ' (replay)' : ''}`;
   try {
@@ -118,33 +124,51 @@ async function loadChart() {
     chart.setSymbol(symbol, info.digits);
     chart.setData(candles);
     state.ready = true;
+    openStream(generation);
     void refreshAccount();
   } catch (err) {
     if (generation === state.generation) setStatus(`Could not load ${symbol}: ${(err as Error).message}`, true);
   }
 }
 
-/** One polling loop for the whole page: the next request starts only after the last one finished. */
+/** Live prices for the charted symbol. EventSource reconnects by itself if the connection drops. */
+function openStream(generation: number) {
+  const source = new EventSource(api.streamUrl(state.symbol));
+  stream = source;
+  source.onmessage = (e) => {
+    if (generation !== state.generation) return;
+    const event = JSON.parse(e.data) as { quote: Quote } | { error: string };
+    if ('error' in event) {
+      if (!tool.active) setStatus(`Price feed: ${event.error}`, true);
+      return;
+    }
+    const { quote } = event;
+    state.quote = quote;
+    els.bid.textContent = quote.bid.toFixed(state.digits);
+    els.ask.textContent = quote.ask.toFixed(state.digits);
+    chart.applyPrice((quote.bid + quote.ask) / 2, quote.time / 1000, TIMEFRAME_SECONDS[state.timeframe]);
+  };
+}
+
+/** One refresh loop for the whole page: the next request starts only after the last one finished. */
 async function pollCandles() {
   const generation = state.generation;
   if (state.ready) {
     try {
-      // In replay several bars can pass between polls; the chart skips the ones it already has.
-      const [candles, quote] = await Promise.all([
-        api.candles(state.symbol, state.timeframe, state.mode === 'replay' ? 50 : 2),
-        api.quote(state.symbol),
-      ]);
-      if (generation === state.generation && state.ready) {
-        chart.update(candles);
-        state.quote = quote;
-        els.bid.textContent = quote.bid.toFixed(state.digits);
-        els.ask.textContent = quote.ask.toFixed(state.digits);
-      }
+      // In replay several bars can pass between refreshes; the chart skips the ones it already has.
+      const candles = await api.candles(state.symbol, state.timeframe, state.mode === 'replay' ? 50 : 3);
+      if (generation === state.generation && state.ready) chart.update(candles);
     } catch (err) {
-      if (!tool.active) setStatus(`Price update failed: ${(err as Error).message}`, true);
+      if (!tool.active) setStatus(`Chart update failed: ${(err as Error).message}`, true);
     }
   }
-  setTimeout(pollCandles, replaying() ? REPLAY_POLL_MS : LIVE_POLL_MS);
+  const delay =
+    state.mode === 'live'
+      ? LIVE_CANDLE_REFRESH_MS
+      : replaying()
+        ? REPLAY_CANDLE_REFRESH_MS
+        : PAUSED_REPLAY_CANDLE_REFRESH_MS;
+  setTimeout(pollCandles, delay);
 }
 
 async function refreshAccount() {

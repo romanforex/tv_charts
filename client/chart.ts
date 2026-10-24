@@ -29,8 +29,10 @@ export class PriceChart {
   readonly candles: ISeriesApi<'Candlestick'>;
   private readonly volume: ISeriesApi<'Histogram'>;
   private readonly watermark;
-  private lastTime = 0;
-  private accountLines: IPriceLine[] = [];
+  /** The newest candle drawn, in UTC seconds (before the local-time shift). */
+  private last?: Candle;
+  /** Order and position lines by key, so unchanged lines are updated in place rather than redrawn. */
+  private accountLines = new Map<string, IPriceLine>();
 
   constructor(private readonly container: HTMLElement) {
     this.chart = createChart(container, {
@@ -70,18 +72,38 @@ export class PriceChart {
   setData(candles: Candle[]) {
     this.candles.setData(candles.map((c) => ({ ...c, time: toChartTime(c.time) })));
     this.volume.setData(candles.map(volumeBar));
-    this.lastTime = candles.at(-1)?.time ?? 0;
+    this.last = candles.at(-1);
     this.chart.timeScale().scrollToRealTime();
   }
 
   /** Applies the latest bars. Bars older than the last one drawn are skipped (the chart can't update them). */
   update(candles: Candle[]) {
     for (const c of candles) {
-      if (c.time < this.lastTime) continue;
-      this.candles.update({ ...c, time: toChartTime(c.time) });
-      this.volume.update(volumeBar(c));
-      this.lastTime = c.time;
+      if (this.last && c.time < this.last.time) continue;
+      this.draw(c);
     }
+  }
+
+  /**
+   * Moves the newest candle with a live price, between candle refreshes. For timeframes up to an
+   * hour a price past the candle's end starts the next candle; H4 and D1 candles are aligned to the
+   * broker's trading day, so those only start with the next refresh.
+   */
+  applyPrice(price: number, time: number, timeframeSeconds: number) {
+    const last = this.last;
+    if (!last) return;
+    const bucket = Math.floor(time / timeframeSeconds) * timeframeSeconds;
+    if (timeframeSeconds <= 3600 && bucket > last.time) {
+      this.draw({ time: bucket, open: price, high: price, low: price, close: price, volume: 0 });
+    } else if (timeframeSeconds > 3600 || bucket === last.time) {
+      this.draw({ ...last, high: Math.max(last.high, price), low: Math.min(last.low, price), close: price });
+    }
+  }
+
+  private draw(c: Candle) {
+    this.candles.update({ ...c, time: toChartTime(c.time) });
+    this.volume.update(volumeBar(c));
+    this.last = c;
   }
 
   /**
@@ -130,30 +152,42 @@ export class PriceChart {
   }
 
   showAccount(orders: PendingOrder[], positions: Position[]) {
-    for (const l of this.accountLines) this.candles.removePriceLine(l);
     const dim = { lineStyle: LineStyle.Dotted, axisLabelVisible: false };
-    this.accountLines = [
-      ...orders.flatMap((o) => [
-        this.line({
-          price: o.entry,
-          color: COLORS.entry,
-          lineStyle: LineStyle.Dashed,
-          title: `${o.side} ${o.kind} ${o.lots}`.toUpperCase(),
-        }),
-        ...(o.takeProfit ? [this.line({ ...dim, price: o.takeProfit, color: COLORS.takeProfit, title: 'TP' })] : []),
-        ...(o.stopLoss ? [this.line({ ...dim, price: o.stopLoss, color: COLORS.stopLoss, title: 'SL' })] : []),
-      ]),
-      ...positions.flatMap((p) => [
-        this.line({
-          price: p.openPrice,
-          color: p.profit >= 0 ? COLORS.takeProfit : COLORS.stopLoss,
-          lineWidth: 2,
-          title: `${p.side} ${p.lots} ${p.profit >= 0 ? '+' : ''}${p.profit.toFixed(2)}`.toUpperCase(),
-        }),
-        ...(p.takeProfit ? [this.line({ ...dim, price: p.takeProfit, color: COLORS.takeProfit, title: 'TP' })] : []),
-        ...(p.stopLoss ? [this.line({ ...dim, price: p.stopLoss, color: COLORS.stopLoss, title: 'SL' })] : []),
-      ]),
-    ];
+    const wanted = new Map<string, CreatePriceLineOptions>();
+    const levels = (key: string, tp?: number, sl?: number) => {
+      if (tp) wanted.set(`${key}:tp`, { ...dim, price: tp, color: COLORS.takeProfit, title: 'TP' });
+      if (sl) wanted.set(`${key}:sl`, { ...dim, price: sl, color: COLORS.stopLoss, title: 'SL' });
+    };
+    for (const o of orders) {
+      wanted.set(`o${o.id}`, {
+        price: o.entry,
+        color: COLORS.entry,
+        lineStyle: LineStyle.Dashed,
+        title: `${o.side} ${o.kind} ${o.lots}`.toUpperCase(),
+      });
+      levels(`o${o.id}`, o.takeProfit, o.stopLoss);
+    }
+    for (const p of positions) {
+      wanted.set(`p${p.id}`, {
+        price: p.openPrice,
+        color: p.profit >= 0 ? COLORS.takeProfit : COLORS.stopLoss,
+        lineWidth: 2,
+        title: `${p.side} ${p.lots} ${p.profit >= 0 ? '+' : ''}${p.profit.toFixed(2)}`.toUpperCase(),
+      });
+      levels(`p${p.id}`, p.takeProfit, p.stopLoss);
+    }
+
+    for (const [key, line] of this.accountLines) {
+      if (!wanted.has(key)) {
+        this.candles.removePriceLine(line);
+        this.accountLines.delete(key);
+      }
+    }
+    for (const [key, options] of wanted) {
+      const line = this.accountLines.get(key);
+      if (line) line.applyOptions(options);
+      else this.accountLines.set(key, this.line(options));
+    }
   }
 }
 
