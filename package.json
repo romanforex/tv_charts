@@ -1,18 +1,35 @@
 {
-  "name": "lightweightchartsdemo",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.html",
+  "name": "tv-charts",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Forex charts with three-click limit/stop orders (entry, take profit, stop loss).",
   "scripts": {
-    "start": "parcel index.html --open",
-    "build": "parcel build index.html"
+    "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
+    "dev:client": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "NODE_ENV=production tsx --env-file-if-exists=.env server/index.ts",
+    "download": "tsx --env-file-if-exists=.env scripts/download.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20.12"
   },
   "dependencies": {
-    "lightweight-charts": "2.0.0"
+    "@fastify/static": "^10.1.7",
+    "fastify": "^5.12.7",
+    "lightweight-charts": "^5.2.1",
+    "metaapi.cloud-sdk": "^29.3.4",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@babel/core": "7.2.0",
-    "parcel-bundler": "^1.6.1"
-  },
-  "keywords": []
+    "@types/node": "^22.20.5",
+    "concurrently": "^9.2.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vitest": "^3.2.7"
+  }
 }

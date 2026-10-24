@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TV Charts</title>
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="group">
+        <select id="mode" aria-label="Mode">
+          <option value="live">Live</option>
+          <option value="replay">Replay</option>
+        </select>
+      </div>
+
+      <form id="symbol-form" class="group">
+        <input id="symbol" list="symbols" value="EURUSD" spellcheck="false" autocomplete="off" aria-label="Symbol" />
+        <datalist id="symbols">
+          <option value="EURUSD"></option>
+          <option value="GBPUSD"></option>
+          <option value="USDJPY"></option>
+          <option value="AUDUSD"></option>
+          <option value="USDCAD"></option>
+          <option value="USDCHF"></option>
+          <option value="NZDUSD"></option>
+          <option value="EURJPY"></option>
+          <option value="GBPJPY"></option>
+          <option value="EURGBP"></option>
+          <option value="XAUUSD"></option>
+        </datalist>
+        <select id="timeframe" aria-label="Timeframe"></select>
+      </form>
+
+      <div class="group">
+        <label>Lots <input id="lots" type="number" min="0.01" step="0.01" value="0.10" /></label>
+        <button id="new-order" class="primary" title="Shortcut: N">New order</button>
+        <label class="check"><input id="confirm" type="checkbox" checked /> Confirm before sending</label>
+      </div>
+
+      <div class="group">
+        <button id="cancel-orders">Cancel pending</button>
+        <button id="close-positions" class="danger">Close positions</button>
+      </div>
+
+      <div class="group quote"><span id="bid">-</span> / <span id="ask">-</span></div>
+      <div class="group right"><span id="venue"></span></div>
+    </header>
+
+    <div id="replay-bar" class="toolbar" hidden>
+      <div class="group">
+        <button id="replay-play" class="primary" title="Shortcut: Space">Play</button>
+        <button id="replay-step" title="Advance one candle">Step</button>
+        <select id="replay-speed" aria-label="Replay speed">
+          <option value="1">1x</option>
+          <option value="10">10x</option>
+          <option value="60" selected>60x</option>
+          <option value="300">300x</option>
+          <option value="1800">1800x</option>
+        </select>
+        <span id="replay-clock" class="clock"></span>
+      </div>
+      <form id="replay-seek" class="group">
+        <input id="replay-date" type="datetime-local" aria-label="Replay date" />
+        <button>Jump</button>
+      </form>
+      <div class="group right"><span id="replay-stats"></span></div>
+    </div>
+
+    <div id="chart"></div>
+
+    <footer class="statusbar">
+      <span id="status">Press N or click "New order", then click entry, take profit and stop loss on the chart.</span>
+      <span id="confirm-actions" hidden>
+        <button id="send" class="primary">Send (Enter)</button>
+        <button id="discard">Cancel (Esc)</button>
+      </span>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

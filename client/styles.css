@@ -1,0 +1,160 @@
+:root {
+  --bg: #131722;
+  --panel: #1e222d;
+  --border: #2a2e39;
+  --text: #d1d4dc;
+  --muted: #787b86;
+  --accent: #2962ff;
+  --up: #26a69a;
+  --down: #ef5350;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+.toolbar,
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.statusbar {
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  min-height: 38px;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.right {
+  margin-left: auto;
+}
+
+#chart {
+  flex: 1;
+  min-height: 0;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+#symbol {
+  width: 90px;
+  text-transform: uppercase;
+}
+
+#lots {
+  width: 70px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--muted);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.danger {
+  color: var(--down);
+}
+
+button.active {
+  outline: 2px solid #fff;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.quote {
+  font-variant-numeric: tabular-nums;
+}
+
+#bid {
+  color: var(--down);
+}
+
+#ask {
+  color: var(--up);
+}
+
+#venue {
+  color: var(--muted);
+}
+
+.live {
+  color: #fff;
+  background: var(--down);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-weight: 600;
+}
+
+#status.error {
+  color: var(--down);
+}
+
+#confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#confirm-actions[hidden] {
+  display: none;
+}
+
+#replay-bar[hidden] {
+  display: none;
+}
+
+.clock {
+  font-variant-numeric: tabular-nums;
+  min-width: 140px;
+}
+
+#replay-stats {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
