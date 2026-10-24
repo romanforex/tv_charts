@@ -1,0 +1,211 @@
+import type {
+  Candle,
+  OrderResult,
+  PendingOrder,
+  PendingOrderRequest,
+  Position,
+  Quote,
+  SymbolInfo,
+  Timeframe,
+} from '../../shared/types';
+import { fromOandaInstrument, toOandaInstrument } from '../symbols';
+import { BrokerError, type Execution, type MarketData } from './types';
+
+const GRANULARITY: Record<Timeframe, string> = {
+  M1: 'M1',
+  M5: 'M5',
+  M15: 'M15',
+  M30: 'M30',
+  H1: 'H1',
+  H4: 'H4',
+  D1: 'D',
+};
+
+export interface OandaOptions {
+  token: string;
+  accountId: string;
+  env: 'practice' | 'live';
+  unitsPerLot: number;
+}
+
+// Subsets of the OANDA v20 REST responses that we read.
+interface OandaCandle {
+  time: string;
+  volume: number;
+  mid: { o: string; h: string; l: string; c: string };
+}
+interface OandaOrder {
+  id: string;
+  type: string;
+  instrument: string;
+  units: string;
+  price: string;
+  takeProfitOnFill?: { price: string };
+  stopLossOnFill?: { price: string };
+}
+interface OandaTrade {
+  id: string;
+  instrument: string;
+  currentUnits: string;
+  price: string;
+  unrealizedPL: string;
+  takeProfitOrder?: { price: string };
+  stopLossOrder?: { price: string };
+}
+
+/** OANDA v20 REST API: https://developer.oanda.com/rest-live-v20/introduction/ */
+export class OandaBroker implements MarketData, Execution {
+  readonly name = 'oanda';
+  readonly live: boolean;
+  private readonly baseUrl: string;
+  private readonly digitsCache = new Map<string, number>();
+
+  constructor(private readonly opts: OandaOptions) {
+    this.live = opts.env === 'live';
+    this.baseUrl = this.live ? 'https://api-fxtrade.oanda.com/v3' : 'https://api-fxpractice.oanda.com/v3';
+  }
+
+  async getCandles(symbol: string, timeframe: Timeframe, count: number): Promise<Candle[]> {
+    const params = new URLSearchParams({ granularity: GRANULARITY[timeframe], count: String(count), price: 'M' });
+    const data = await this.request<{ candles: OandaCandle[] }>(
+      'GET',
+      `/instruments/${toOandaInstrument(symbol)}/candles?${params}`,
+    );
+    return data.candles.map((c) => ({
+      time: Math.floor(Date.parse(c.time) / 1000),
+      open: Number(c.mid.o),
+      high: Number(c.mid.h),
+      low: Number(c.mid.l),
+      close: Number(c.mid.c),
+      volume: c.volume,
+    }));
+  }
+
+  async getQuote(symbol: string): Promise<Quote> {
+    const data = await this.request<{ prices: { time: string; bids: { price: string }[]; asks: { price: string }[] }[] }>(
+      'GET',
+      `${this.account}/pricing?instruments=${toOandaInstrument(symbol)}`,
+    );
+    const price = data.prices[0];
+    if (!price?.bids.length || !price.asks.length) throw new BrokerError(`No price for ${symbol}`);
+    return { bid: Number(price.bids[0].price), ask: Number(price.asks[0].price), time: Date.parse(price.time) };
+  }
+
+  async getSymbolInfo(symbol: string): Promise<SymbolInfo> {
+    let digits = this.digitsCache.get(symbol);
+    if (digits === undefined) {
+      const data = await this.request<{ instruments: { displayPrecision: number }[] }>(
+        'GET',
+        `${this.account}/instruments?instruments=${toOandaInstrument(symbol)}`,
+      );
+      if (!data.instruments.length) throw new BrokerError(`Unknown instrument ${symbol}`, 404);
+      digits = data.instruments[0].displayPrecision;
+      this.digitsCache.set(symbol, digits);
+    }
+    return { symbol, digits };
+  }
+
+  async placePendingOrder(order: PendingOrderRequest): Promise<OrderResult> {
+    const { digits } = await this.getSymbolInfo(order.symbol);
+    const units = Math.round(order.lots * this.opts.unitsPerLot) * (order.side === 'buy' ? 1 : -1);
+    if (units === 0) throw new BrokerError('Lot size is too small', 400);
+    const data = await this.request<{ orderCreateTransaction: { id: string } }>('POST', `${this.account}/orders`, {
+      order: {
+        type: order.kind === 'limit' ? 'LIMIT' : 'STOP',
+        instrument: toOandaInstrument(order.symbol),
+        units: String(units),
+        price: order.entry.toFixed(digits),
+        timeInForce: 'GTC',
+        positionFill: 'DEFAULT',
+        takeProfitOnFill: { price: order.takeProfit.toFixed(digits) },
+        stopLossOnFill: { price: order.stopLoss.toFixed(digits) },
+      },
+    });
+    const id = data.orderCreateTransaction.id;
+    return { id, message: `OANDA order ${id} created` };
+  }
+
+  async listPendingOrders(symbol?: string): Promise<PendingOrder[]> {
+    const data = await this.request<{ orders: OandaOrder[] }>('GET', `${this.account}/pendingOrders`);
+    return data.orders
+      // TP/SL orders attached to open trades are also "pending"; only entry orders are wanted here.
+      .filter((o) => (o.type === 'LIMIT' || o.type === 'STOP') && this.matches(o.instrument, symbol))
+      .map((o) => ({
+        id: o.id,
+        symbol: fromOandaInstrument(o.instrument),
+        side: Number(o.units) > 0 ? 'buy' : 'sell',
+        kind: o.type === 'LIMIT' ? 'limit' : 'stop',
+        lots: Math.abs(Number(o.units)) / this.opts.unitsPerLot,
+        entry: Number(o.price),
+        takeProfit: optionalNumber(o.takeProfitOnFill?.price),
+        stopLoss: optionalNumber(o.stopLossOnFill?.price),
+      }));
+  }
+
+  async listPositions(symbol?: string): Promise<Position[]> {
+    const data = await this.request<{ trades: OandaTrade[] }>('GET', `${this.account}/openTrades`);
+    return data.trades
+      .filter((t) => this.matches(t.instrument, symbol))
+      .map((t) => ({
+        id: t.id,
+        symbol: fromOandaInstrument(t.instrument),
+        side: Number(t.currentUnits) > 0 ? 'buy' : 'sell',
+        lots: Math.abs(Number(t.currentUnits)) / this.opts.unitsPerLot,
+        openPrice: Number(t.price),
+        takeProfit: optionalNumber(t.takeProfitOrder?.price),
+        stopLoss: optionalNumber(t.stopLossOrder?.price),
+        profit: Number(t.unrealizedPL),
+      }));
+  }
+
+  async cancelPendingOrders(symbol: string): Promise<number> {
+    const orders = await this.listPendingOrders(symbol);
+    for (const o of orders) await this.request('PUT', `${this.account}/orders/${o.id}/cancel`);
+    return orders.length;
+  }
+
+  async closePositions(symbol: string): Promise<number> {
+    const positions = await this.listPositions(symbol);
+    for (const p of positions) await this.request('PUT', `${this.account}/trades/${p.id}/close`);
+    return positions.length;
+  }
+
+  private get account() {
+    return `/accounts/${this.opts.accountId}`;
+  }
+
+  private matches(instrument: string, symbol?: string) {
+    return !symbol || fromOandaInstrument(instrument) === symbol;
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    let res: Response;
+    try {
+      res = await fetch(this.baseUrl + path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.opts.token}`,
+          'Content-Type': 'application/json',
+          'Accept-Datetime-Format': 'RFC3339',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch (err) {
+      throw new BrokerError(`Could not reach OANDA: ${(err as Error).message}`);
+    }
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const reject = data.orderRejectTransaction as { rejectReason?: string } | undefined;
+      const reason = reject?.rejectReason ?? data.errorMessage ?? res.statusText;
+      throw new BrokerError(`OANDA: ${reason}`, res.status >= 500 ? 502 : 400);
+    }
+    // A 201 can still carry a cancel transaction, e.g. when OANDA rejects the TP/SL after accepting the order.
+    const cancel = data.orderCancelTransaction as { reason?: string } | undefined;
+    if (method === 'POST' && cancel) throw new BrokerError(`OANDA cancelled the order: ${cancel.reason}`, 400);
+    return data as T;
+  }
+}
+
+function optionalNumber(value: string | undefined): number | undefined {
+  return value === undefined ? undefined : Number(value);
+}
